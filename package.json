@@ -17,6 +17,6 @@
   "devDependencies": {
     "@types/dom-speech-recognition": "^0.0.4",
     "@types/node": "^22.5.2",
-    "esbuild": "0.21.0"
+    "esbuild": "0.25.0"
   }
 }
