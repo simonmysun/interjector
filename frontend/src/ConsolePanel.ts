@@ -1,6 +1,10 @@
+type ConsolePanelEventName = 'start' | 'stop' | 'clear' | 'complete' | 'abort';
 
-type ConsolePanelEventName = 'start' | 'stop' | 'clear' | 'complete';
-
+/**
+ * Manages the control bar. Button labels/states are driven directly by the DOM
+ * (DOM-as-state, F-UI-3): e.g. the start button text distinguishes Start/Stop,
+ * the complete button text distinguishes Complete/Abort.
+ */
 class ConsolePanel {
   private startBtnDom: HTMLButtonElement;
   private clearBtnDom: HTMLButtonElement;
@@ -8,58 +12,86 @@ class ConsolePanel {
   private audioIndicatorDom: HTMLDivElement;
   private soundIndicatorDom: HTMLDivElement;
   private speechIndicatorDom: HTMLDivElement;
-  private completeBtnDom: HTMLDivElement;
+  private completeBtnDom: HTMLButtonElement;
+  private statusDom: HTMLDivElement | null;
 
-  private eventListeners: { [eventName in ConsolePanelEventName]: { (event?: SpeechRecognitionEvent): void }[] };
+  private eventListeners: { [eventName in ConsolePanelEventName]: { (): void }[] };
+
   constructor() {
-    this.startBtnDom = <HTMLButtonElement>document.getElementById('start-btn')!;
-    this.clearBtnDom = <HTMLButtonElement>document.getElementById('clear-btn')!;
-    this.runningIndicatorDom = <HTMLDivElement>document.getElementById('running-indicator')!;
-    this.audioIndicatorDom = <HTMLDivElement>document.getElementById('audio-indicator')!;
-    this.soundIndicatorDom = <HTMLDivElement>document.getElementById('sound-indicator')!;
-    this.speechIndicatorDom = <HTMLDivElement>document.getElementById('speech-indicator')!;
-    this.completeBtnDom = <HTMLDivElement>document.getElementById('complete-btn')!;
+    this.startBtnDom = document.getElementById('start-btn') as HTMLButtonElement;
+    this.clearBtnDom = document.getElementById('clear-btn') as HTMLButtonElement;
+    this.runningIndicatorDom = document.getElementById('running-indicator') as HTMLDivElement;
+    this.audioIndicatorDom = document.getElementById('audio-indicator') as HTMLDivElement;
+    this.soundIndicatorDom = document.getElementById('sound-indicator') as HTMLDivElement;
+    this.speechIndicatorDom = document.getElementById('speech-indicator') as HTMLDivElement;
+    this.completeBtnDom = document.getElementById('complete-btn') as HTMLButtonElement;
+    this.statusDom = document.getElementById('status') as HTMLDivElement | null;
     this.eventListeners = {
-      'start': [],
-      'stop': [],
-      'clear': [],
-      'complete': []
+      start: [],
+      stop: [],
+      clear: [],
+      complete: [],
+      abort: [],
     };
-    this.startBtnDom.addEventListener('click', (() => {
-      if (this.startBtnDom.innerHTML === 'Start') {
-        this.emit('start');
-      } else {
-        this.emit('stop');
-      }
-    }).bind(this));
-    this.clearBtnDom.addEventListener('click', (() => {
-      this.emit('clear');
-    }).bind(this));
-    this.completeBtnDom.addEventListener('click', (() => {
-      this.emit('complete');
-    }).bind(this));
+
+    this.startBtnDom.addEventListener('click', () => {
+      this.emit(this.startBtnDom.textContent === 'Start' ? 'start' : 'stop');
+    });
+    this.clearBtnDom.addEventListener('click', () => this.emit('clear'));
+    this.completeBtnDom.addEventListener('click', () => {
+      this.emit(this.completeBtnDom.textContent === 'Abort' ? 'abort' : 'complete');
+    });
   }
-  private emit(event: ConsolePanelEventName, eventObject?: SpeechRecognitionEvent): void {
+
+  private emit(event: ConsolePanelEventName): void {
     for (const callback of this.eventListeners[event]) {
-      callback(eventObject ? eventObject : undefined);
+      callback();
     }
   }
-  on(event: ConsolePanelEventName, callback: (event?: SpeechRecognitionEvent) => void): void {
+
+  on(event: ConsolePanelEventName, callback: () => void): void {
     this.eventListeners[event].push(callback);
   }
+
   start(): void {
     this.deactiveClearBtn();
     this.activeRunningIndicator();
-    this.startBtnDom.innerHTML = "Stop";
+    this.startBtnDom.textContent = 'Stop';
   }
+
   reset(): void {
     this.deactiveRunningIndicator();
     this.deactiveAudioIndicator();
     this.deactiveSoundIndicator();
     this.deactiveSpeechIndicator();
-    this.deactiveClearBtn();
-    this.startBtnDom.innerHTML = "Start";
+    this.activeClearBtn();
+    this.startBtnDom.textContent = 'Start';
   }
+
+  /** Switch the Complete button into its Abort state while a completion runs (F-03-4). */
+  completing(): void {
+    this.completeBtnDom.textContent = 'Abort';
+  }
+
+  doneCompleting(): void {
+    this.completeBtnDom.textContent = 'Complete';
+  }
+
+  setStatus(message: string, isError = false): void {
+    if (!this.statusDom) {
+      return;
+    }
+    this.statusDom.textContent = message;
+    this.statusDom.classList.toggle('error', isError);
+  }
+
+  clearStatus(): void {
+    if (this.statusDom) {
+      this.statusDom.textContent = '';
+      this.statusDom.classList.remove('error');
+    }
+  }
+
   activeRunningIndicator(): void {
     this.runningIndicatorDom.classList.add('active');
   }
@@ -84,11 +116,14 @@ class ConsolePanel {
   deactiveSpeechIndicator(): void {
     this.speechIndicatorDom.classList.remove('active');
   }
+
+  /** Enable the Clear button. (Previous implementation had this inverted, §4.3 #13.) */
   activeClearBtn(): void {
-    this.clearBtnDom.disabled = true;
-  }
-  deactiveClearBtn(): void {
     this.clearBtnDom.disabled = false;
+  }
+  /** Disable the Clear button. */
+  deactiveClearBtn(): void {
+    this.clearBtnDom.disabled = true;
   }
 }
 

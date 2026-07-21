@@ -20,30 +20,62 @@ Interjector is a web application designed to enhance your communication experien
 
 ## Getting Started
 
-To get started with Interjector, you will need to host the application which requires both a frontend and backend setup. Basically:
+To get started with Interjector:
 
 1. Clone this repository.
 1. Install the dependencies via `npm install`.
+1. Copy `.env.example` to `.env` and fill in your configuration (at minimum `DEEPGRAM_API_KEY` and the translation languages).
 1. Run `npm run build`.
-1. Enter the `./dist` directory and run `node server.bundle.js`.
+1. Run `npm start` (loads `.env`, serves from `./dist`).
 
-You will need to configure it according to the next chapter.
+All configuration lives in `.env` on the server. There is **no in-app settings
+page**: API keys, languages, models and prompts are server-side and never sent
+to the browser. The only thing chosen in the browser is which audio sources to
+capture (microphones / computer output), since that requires user interaction.
 
 Notes:
 
-- You can specify the host and port by setting the `HOST` and `PORT` environment variables when running the server. The default port is 8000.
-- Currently, the recognition is only using the Web Speech API which is supported by almost only Chrome and the performance of languages other than English is not promising. In the future, we will present a Whisper backend to support more browsers and languages.
-- Chrome requires a secure context to use the Web Speech API. I have packed a self-signed certificate but using it in a public production environment is highly unrecommended. You can specify `KEY_PATH`, `CERT_PATH` in the environment variables to use your own certificate or let your reverse proxy handle the SSL. To disable HTTPS, set `HTTP_ONLY` to `true`.
-- If the self-signed certificate is used, you have to allow Chrome to load insecure content by e.g. typing `badidea`. 
+- Speech recognition uses [Deepgram](https://deepgram.com) streaming ASR: **multiple audio sources** (mix several microphones and/or computer/tab output), **multilingual** recognition (`DEEPGRAM_LANGUAGE=multi` for code-switching) and **speaker diarization (角色识别)** via `DEEPGRAM_DIARIZE=true`. Audio is proxied through this server's `/api/asr` WebSocket endpoint, which authenticates to Deepgram with a server-side `Authorization` header — this works in all browsers (browser-direct subprotocol auth is rejected by Firefox), and the key never leaves the server.
+- Audio source selection (on the main page) lets you pick and mix one or more microphones plus computer/tab output. Output capture uses the browser screen/tab share prompt with "share audio" enabled — full system audio works on Chrome (Windows/ChromeOS); elsewhere it is usually limited to tab audio.
+- Capturing microphone/output audio requires a secure context. `http://localhost` qualifies; for a non-localhost host use HTTPS. No certificate is bundled. For local HTTPS generate a self-signed cert with `npm run gen-cert` and set `KEY_PATH`/`CERT_PATH` with `HTTP_ONLY=false`. For production, supply your own certificate or set `HTTP_ONLY=true` and terminate TLS at a reverse proxy (Nginx/Caddy).
 
-## Configuration
+### Configuration
 
-When the server is running, go to `./settings.html` to fill in the configuration such as the API for translation and GPT, and the prompts.
+All settings are environment variables, placed in a `.env` file at the repo root
+(see `.env.example` for the full list). `npm run dev` and `npm start` load `.env`
+automatically (via Node's built-in `--env-file-if-exists`, no extra dependency).
+`.env` is gitignored; do not commit secrets.
 
-- Use BCP 47 language tag for the source language and target language. The source language is also used for speech recognition.
-- Translation backend includes 'free-google-translate', ~~'google-translate'~~ (not implemented yet), ~~'bing-translate'~~ (not implemented yet), ~~'deepl-translate'~~ (not implemented yet), 'openai-translate'. When using 'openai-translate', you need to provide the model and prompt.
-- For completion, you need to fill in an API key and URL. You also need to provide a prompt for the completion. If the model selected starts with 'gemini', the API URL is assumed to be Google Gemini style, otherwise, it is assumed to be OpenAI style.
-  - For example, you may set model to `gemini-1.5-flash-latest` and use `https://generativelanguage.googleapis.com/v1beta/models/` for API URL.
+| Variable | Description |
+|----------|-------------|
+| `PORT` / `HOST` | Listen address (default `8000` / `localhost`). |
+| `HTTP_ONLY` | `true` serves plain HTTP (TLS handled by a reverse proxy). |
+| `KEY_PATH` / `CERT_PATH` | Required for HTTPS. No certificate is bundled. |
+| `DEEPGRAM_API_KEY` | Deepgram key for the `/api/asr` proxy. Stays on the server. |
+| `DEEPGRAM_MODEL` / `DEEPGRAM_LANGUAGE` | Model (default `nova-3`) and language (`multi` for multilingual). |
+| `DEEPGRAM_DIARIZE` | `true` to enable speaker diarization (角色识别). |
+| `TRANSLATION_SOURCE_LANGUAGE` / `TRANSLATION_TARGET_LANGUAGE` | BCP 47 language tags. |
+| `TRANSLATION_BACKEND` | `free-google-translate` \| `google-translate` \| `bing-translate` \| `deepl-translate` \| `openai-translate`. |
+| `TRANSLATION_API_URL` / `TRANSLATION_API_KEY` / `TRANSLATION_MODEL` / `TRANSLATION_PROMPT` | Per-backend translation settings. |
+| `COMPLETION_API_URL` / `COMPLETION_API_KEY` / `COMPLETION_MODEL` / `COMPLETION_PROMPT` | Optional LLM completion ("Complete" button). |
+
+All API keys are read from the environment on the server and are never returned to
+the browser. The frontend sends only the text to translate/complete and the audio
+to transcribe.
+
+### Development
+
+- `npm run dev` — one-command dev environment. Builds the frontend + backend bundles, copies static assets, starts the server, and watches for changes: frontend edits rebuild the client bundle, `frontend/public/*` edits re-copy static assets, and backend edits rebuild and automatically restart the server. Loads `.env` automatically. Defaults to `HTTP_ONLY=true` on `http://localhost:8000/`; override via `.env` or the shell, e.g. `PORT=8080 npm run dev`.
+- `npm start` — run the built server from `dist/` for production-like use; loads `.env` from the repo root. Run `npm run build` first.
+- `npm run check-deepgram-key` — verify the `DEEPGRAM_API_KEY` from `.env` (or the shell) is accepted by Deepgram.
+- `npm run typecheck` — type-check the whole project.
+- `npm test` — run the unit and integration tests (`node:test`).
+
+## Configuration tips
+
+- Use BCP 47 language tags for `TRANSLATION_SOURCE_LANGUAGE` / `TRANSLATION_TARGET_LANGUAGE`.
+- `TRANSLATION_BACKEND=free-google-translate` needs no key; `google-translate` / `bing-translate` / `deepl-translate` each need their own `TRANSLATION_API_KEY`; `openai-translate` needs `TRANSLATION_MODEL` + `TRANSLATION_PROMPT`.
+- For completion, set `COMPLETION_API_URL` + `COMPLETION_API_KEY` + `COMPLETION_MODEL` (+ `COMPLETION_PROMPT`). If the model starts with `gemini`, the URL is treated as Google Gemini style (e.g. `https://generativelanguage.googleapis.com/v1beta/models/`); otherwise OpenAI style.
 - [Prompt Examples](./docs/prompt-examples.md) are provided to help you get started.
 
 ## Screenshot
@@ -55,9 +87,9 @@ Screenshot demonstrating interjector generating response while listening to an i
 
 ## TODO
 
-1. The current implementation of speech recognition is based on Web Speech API. As of 2024-05-20 This API is not supported by most browsers and Chrome can almost only recognize English. We need to implement a more robust solution that works across more browsers and supports more languages.
-1. More translation API
-1. More prompts
+1. More built-in streaming ASR providers (e.g. AssemblyAI, OpenAI realtime). The `SpeechRecognitionProvider` interface and a Deepgram provider are in place.
+1. Multi-language UI.
+1. More prompts.
 
 ## License
 See [LICENSE](LICENSE).

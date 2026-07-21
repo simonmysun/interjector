@@ -15,7 +15,16 @@
     🔊: <div id="audio-indicator"></div>
     🎶: <div id="sound-indicator"></div>
     💬: <div id="speech-indicator"></div>
-    <a href="/settings.html">Settings</a>
+    <div id="status"></div>
+  </div>
+  <div id="audio-sources">
+    <strong>Audio sources</strong>
+    <button type="button" id="refresh-devices">Refresh microphones</button>
+    <span id="mic-list">Click "Refresh microphones" to choose inputs.</span>
+    <label id="system-audio-label">
+      <input type="checkbox" id="system-audio"> Computer / tab output
+    </label>
+    <span id="config-summary"></span>
   </div>
   <div id="container">
     <div id="transcript">
@@ -28,7 +37,7 @@
     </div>
     <div id="completions"></div>
   </div>
-  <script src="./static/client.bundle.js"></script>
+  <script src="./static/main.bundle.js"></script>
 </body>
 
 </html>

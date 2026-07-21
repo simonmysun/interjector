@@ -2,14 +2,20 @@
   "name": "interjector",
   "version": "0.0.1",
   "main": "scripts.js",
+  "type": "module",
   "scripts": {
     "clean": "rm -rf dist/* && mkdir -p dist/static",
-    "build-frontend": "esbuild ./frontend/src/main.ts --bundle --minify --outfile=./dist/static/client.bundle.js --platform=browser",
-    "build-backend": "esbuild ./backend/src/server.ts --bundle --minify --outfile=./dist/server.bundle.js --platform=node",
+    "build-frontend": "esbuild ./frontend/src/main.ts --bundle --minify --outdir=./dist/static --entry-names=[name].bundle --platform=browser",
+    "build-backend": "esbuild ./backend/src/server.ts --bundle --minify --outfile=./dist/server.bundle.js --platform=node --format=esm --packages=external",
     "build": "npm run clean && npm run build-frontend && npm run build-backend && cp ./frontend/public/* ./dist/static/",
+    "dev": "node --env-file-if-exists=.env ./scripts/dev.mjs",
     "dev-frontend": "npm run build-frontend -- --sourcemap --watch",
     "dev-backend": "npm run build-backend -- --sourcemap --watch",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "cd dist && node --env-file-if-exists=../.env server.bundle.js",
+    "typecheck": "tsc --noEmit",
+    "gen-cert": "bash ./scripts/gen-cert.sh",
+    "check-deepgram-key": "node --env-file-if-exists=.env ./scripts/check-deepgram-key.mjs",
+    "test": "node --test --experimental-strip-types"
   },
   "author": "Maoyin Sun <mail@maoyin.eu> (https://maoyin.eu/)",
   "license": "MIT",
@@ -17,6 +23,10 @@
   "devDependencies": {
     "@types/dom-speech-recognition": "^0.0.4",
     "@types/node": "^22.5.2",
-    "esbuild": "0.25.0"
+    "esbuild": "0.25.0",
+    "typescript": "^5.6.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.0": true
   }
 }

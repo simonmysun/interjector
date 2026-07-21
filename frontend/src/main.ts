@@ -1,245 +1,239 @@
-// import '@types/dom-speech-recognition';
-import type { GlobalOptions } from './@types';
-import SpeechRecognitionController from './SpeechRecognitionController';
+import type { AudioSourceOptions, PublicConfig, RecognitionResult } from './@types';
+import { fetchConfig } from './config';
+import DeepgramProvider from './speech/DeepgramProvider';
+import AudioMixer from './audio/AudioMixer';
 import ResultManager from './ResultManager';
 import ConsolePanel from './ConsolePanel';
+import { translate } from './translation';
+import { runCompletion } from './completion';
 
-const globalOptions: GlobalOptions = localStorage.getItem('globalOptions') ? JSON.parse(localStorage.getItem('globalOptions')!) : {
-  translation: {
-    targetLanguage: '',
-    sourceLanguage: '',
-    backend: '',
-    apiUrl: '',
-    apiKey: '',
-    model: '',
-    prompt: ''
-  },
-  completion: {
-    model: '',
-    apiKey: '',
-    apiURL: '',
-    prompt: ''
-  }
-};
+/** Debounce window (ms) for translating in-progress (interim) transcripts. */
+const INTERIM_TRANSLATE_DEBOUNCE_MS = 400;
 
 class Interjector {
-  private speechRecognitionController: SpeechRecognitionController;
-  private resultManager: ResultManager;
-  private consolePanel: ConsolePanel;
-  private onGoingTranscript: string;
-  constructor() {
-    this.speechRecognitionController = new SpeechRecognitionController();
-    this.resultManager = new ResultManager();
-    this.consolePanel = new ConsolePanel();
-    this.consolePanel.on('start', () => {
-      this.speechRecognitionController.setLang(globalOptions.translation.sourceLanguage);
-      this.speechRecognitionController.start();
-    });
-    this.consolePanel.on('stop', () => {
-      this.speechRecognitionController.reset();
-    });
-    this.consolePanel.on('clear', () => {
-      this.resultManager.clearTranscript();
-    });
-    this.consolePanel.on('complete', () => {
-      this.completeTranscript();
-    });
-    this.speechRecognitionController.on('start', () => {
-      this.resultManager.setOnGoingTranscript(this.onGoingTranscript);
-      this.consolePanel.start();
-    });
-    this.speechRecognitionController.on('end', () => {
-      this.resultManager.setOnGoingTranscript(this.onGoingTranscript);
-      this.consolePanel.reset();
-    });
-    this.speechRecognitionController.on('result', (event: SpeechRecognitionEvent): void => {
-      let newOnGoingTranscript: string[] = [];
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          this.resultManager.addFinalTranscript(event.results[i][0].transcript);
-          fetch(`/api/translate`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              text: event.results[i][0].transcript,
-              targetLanguage: globalOptions.translation.targetLanguage,
-              sourceLanguage: globalOptions.translation.sourceLanguage,
-              backend: globalOptions.translation.backend,
-              apiUrl: globalOptions.translation.apiUrl,
-              apiKey: globalOptions.translation.apiKey,
-              model: globalOptions.translation.model,
-              prompt: globalOptions.translation.prompt
-            })
-          })
-            .then((res: Response): Promise<{ text: string }> => res.json())
-            .then((res: { text: string }): void => {
-              this.resultManager.addTranslatedTranscript(res.text);
-            });
-        } else {
-          newOnGoingTranscript.push(event.results[i][0].transcript);
-        }
-        if (newOnGoingTranscript.length > 1 && newOnGoingTranscript.slice(0, -1).join(' ') !== this.onGoingTranscript) {
-          fetch(`/api/translate`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              text: newOnGoingTranscript.slice(0, -1).join(' '),
-              targetLanguage: globalOptions.translation.targetLanguage,
-              sourceLanguage: globalOptions.translation.sourceLanguage,
-              backend: globalOptions.translation.backend,
-              apiUrl: globalOptions.translation.apiUrl,
-              apiKey: globalOptions.translation.apiKey,
-              model: globalOptions.translation.model,
-              prompt: globalOptions.translation.prompt
-            })
-          })
-            .then((res: Response): Promise<{ text: string }> => res.json())
-            .then((res: { text: string }): void => {
-              this.resultManager.setOnGoingTranscriptTranslation(res.text);
-            });
-        }
-        this.onGoingTranscript = newOnGoingTranscript.slice(0, -1).join(' ');
-        this.resultManager.setOnGoingTranscript(newOnGoingTranscript.map((t: string) => `<div class="transcript-item not-final">${t}</div>`).join(' '));
+  private config: PublicConfig;
+  private resultManager = new ResultManager();
+  private consolePanel = new ConsolePanel();
+  private speech: DeepgramProvider | null = null;
+  private completionController: AbortController | null = null;
+  private interimTranslateTimer: ReturnType<typeof setTimeout> | null = null;
+  private interimTranslateController: AbortController | null = null;
+
+  // Audio source UI elements.
+  private micListDom = document.getElementById('mic-list') as HTMLSpanElement;
+  private refreshDevicesDom = document.getElementById('refresh-devices') as HTMLButtonElement;
+  private systemAudioDom = document.getElementById('system-audio') as HTMLInputElement;
+  private configSummaryDom = document.getElementById('config-summary') as HTMLSpanElement;
+
+  constructor(config: PublicConfig) {
+    this.config = config;
+    this.showConfigSummary();
+    this.wireConsole();
+    this.wireAudioControls();
+  }
+
+  private showConfigSummary(): void {
+    const t = this.config.translation;
+    const parts = [
+      `ASR: ${this.config.speech.language}${this.config.speech.diarize ? ' +diarize' : ''}`,
+      `translate: ${t.sourceLanguage || '?'}→${t.targetLanguage || '?'} (${t.backend})`,
+    ];
+    this.configSummaryDom.textContent = parts.join('  ·  ');
+  }
+
+  private wireAudioControls(): void {
+    this.refreshDevicesDom.addEventListener('click', () => void this.refreshMicrophones());
+  }
+
+  /** List microphones as checkboxes (requires permission to reveal labels). */
+  private async refreshMicrophones(): Promise<void> {
+    try {
+      const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
+      probe.getTracks().forEach((track) => track.stop());
+      const mics = await AudioMixer.listMicrophones();
+      if (mics.length === 0) {
+        this.micListDom.textContent = 'No microphones found.';
+        return;
+      }
+      this.micListDom.replaceChildren();
+      mics.forEach((mic, index) => {
+        const label = document.createElement('label');
+        label.className = 'mic-option';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = mic.deviceId;
+        checkbox.checked = index === 0; // default to the first mic
+        label.appendChild(checkbox);
+        label.appendChild(document.createTextNode(' ' + (mic.label || `Microphone ${index + 1}`)));
+        this.micListDom.appendChild(label);
+      });
+    } catch {
+      this.micListDom.textContent = 'Could not access microphones (permission denied or unsupported).';
+    }
+  }
+
+  /** Read the current audio source selection from the in-page controls. */
+  private collectAudioOptions(): AudioSourceOptions {
+    const boxes = this.micListDom.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    const microphoneIds: string[] = [];
+    boxes.forEach((box) => {
+      if (box.checked) {
+        microphoneIds.push(box.value);
       }
     });
-    this.speechRecognitionController.on('audiostart', () => {
-      this.consolePanel.activeAudioIndicator();
-    });
-    this.speechRecognitionController.on('audioend', () => {
-      this.consolePanel.deactiveAudioIndicator();
-    });
-    this.speechRecognitionController.on('soundstart', () => {
-      this.consolePanel.activeSoundIndicator();
-    });
-    this.speechRecognitionController.on('soundend', () => {
-      this.consolePanel.deactiveSoundIndicator();
-    });
-    this.speechRecognitionController.on('speechstart', () => {
-      this.consolePanel.activeSpeechIndicator();
-    });
-    this.speechRecognitionController.on('speechend', () => {
-      this.consolePanel.deactiveSpeechIndicator();
-    });
-    this.speechRecognitionController.on('nomatch', () => {
-      console.log('nomatch'); // when does this happen?
-    });
-
+    return { microphoneIds, systemAudio: this.systemAudioDom.checked };
   }
+
+  private wireConsole(): void {
+    this.consolePanel.on('start', () => this.startRecognition());
+    this.consolePanel.on('stop', () => this.speech?.stop());
+    this.consolePanel.on('clear', () => this.resultManager.clearTranscript());
+    this.consolePanel.on('complete', () => this.completeTranscript());
+    this.consolePanel.on('abort', () => this.abortCompletion());
+  }
+
+  private startRecognition(): void {
+    this.consolePanel.clearStatus();
+    const speech = new DeepgramProvider(this.collectAudioOptions());
+    this.speech = speech;
+
+    speech.on('start', () => this.consolePanel.start());
+    speech.on('end', () => {
+      this.cancelInterimTranslation();
+      this.consolePanel.reset();
+      this.speech = null;
+    });
+    speech.on('error', (message?: string) =>
+      this.consolePanel.setStatus(
+        message ? `Speech recognition error: ${message}` : 'Speech recognition error',
+        true,
+      ),
+    );
+    speech.on('audiostart', () => this.consolePanel.activeAudioIndicator());
+    speech.on('audioend', () => this.consolePanel.deactiveAudioIndicator());
+    speech.on('soundstart', () => this.consolePanel.activeSoundIndicator());
+    speech.on('soundend', () => this.consolePanel.deactiveSoundIndicator());
+    speech.on('speechstart', () => this.consolePanel.activeSpeechIndicator());
+    speech.on('speechend', () => this.consolePanel.deactiveSpeechIndicator());
+    speech.on('result', (result: RecognitionResult) => this.handleResult(result));
+
+    speech.start();
+  }
+
+  /**
+   * Handle a single recognition result. State is derived from the DOM
+   * (DOM-as-state): the interim region is the only mirror of the in-progress
+   * transcript, so we compare against it directly.
+   */
+  private handleResult(result: RecognitionResult): void {
+    if (result.isFinal) {
+      this.cancelInterimTranslation();
+      this.resultManager.addFinalTranscript(result.transcript, result.speaker);
+      this.resultManager.setOnGoingTranscript('');
+      this.translateInto(result.transcript, (text) => this.resultManager.addTranslatedTranscript(text));
+      return;
+    }
+
+    const previous = this.resultManager.getOnGoingTranscript();
+    this.resultManager.setOnGoingTranscript(result.transcript);
+    if (result.transcript && result.transcript !== previous) {
+      this.scheduleInterimTranslation(result.transcript);
+    }
+  }
+
+  /**
+   * Interim results arrive many times per second; debounce them and keep only
+   * one in-flight request so we don't flood the translation backend or apply
+   * stale, out-of-order responses.
+   */
+  private scheduleInterimTranslation(text: string): void {
+    if (this.interimTranslateTimer) {
+      clearTimeout(this.interimTranslateTimer);
+    }
+    this.interimTranslateTimer = setTimeout(() => {
+      this.interimTranslateTimer = null;
+      this.interimTranslateController?.abort();
+      const controller = new AbortController();
+      this.interimTranslateController = controller;
+      this.translateInto(
+        text,
+        (translated) => this.resultManager.setOnGoingTranscriptTranslation(translated),
+        controller.signal,
+      );
+    }, INTERIM_TRANSLATE_DEBOUNCE_MS);
+  }
+
+  private cancelInterimTranslation(): void {
+    if (this.interimTranslateTimer) {
+      clearTimeout(this.interimTranslateTimer);
+      this.interimTranslateTimer = null;
+    }
+    this.interimTranslateController?.abort();
+    this.interimTranslateController = null;
+  }
+
+  private translateInto(
+    text: string,
+    apply: (translated: string) => void,
+    signal?: AbortSignal,
+  ): void {
+    translate(text, signal)
+      .then(apply)
+      .catch((error) => {
+        if ((error as Error)?.name === 'AbortError') {
+          return;
+        }
+        this.consolePanel.setStatus(String((error as Error).message ?? error), true);
+      });
+  }
+
   completeTranscript(): void {
-    const abortController = new AbortController();
+    if (this.completionController) {
+      return;
+    }
+    const transcript = this.resultManager.getTranscript();
+    if (!transcript) {
+      this.consolePanel.setStatus('Nothing to complete yet.', true);
+      return;
+    }
+    this.consolePanel.clearStatus();
+    this.consolePanel.completing();
+
     const completionDom = document.createElement('div');
     completionDom.classList.add('completion');
-    const resultManager = this.resultManager;
-    resultManager.addCompletion(completionDom);
-    if (globalOptions.completion.model.startsWith('gemini')) {
-      fetch(`${globalOptions.completion.apiURL
-        }${globalOptions.completion.model}:streamGenerateContent?key=${globalOptions.completion.apiKey}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': globalOptions.completion.apiKey,
-        },
-        // mode: 'no-cors',
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  text: globalOptions.completion.prompt + '\n\n' + resultManager.getTranscript(),
-                },
-              ],
-            }
-          ],
-        }),
-      }).then((res: Response): any => {
-        const decoder = new TextDecoder();
-        const reader = res.body!.getReader();
-        let unprocessedParts: string = '';
-        let skipFirstByte = false;
-        let completeJSON = true;
-        let JSONPart = '';
-        reader.read().then(function processResult({ done, value }) { // how is the type here?
-          const lines = done ? unprocessedParts.split("\n") : (unprocessedParts + decoder.decode(value)).split("\n");
-          unprocessedParts = lines.pop()!;
-          for (let line of lines) {
-            if (skipFirstByte === false && line.length > 0) {
-              skipFirstByte = true;
-              line = line.slice(1);
-            }
-            if (completeJSON === true && (line === ',\r' || line === ']\r')) {
-              continue;
-            } else {
-              completeJSON = false;
-              JSONPart += line;
-              try {
-                let data = JSON.parse(JSONPart);
-                JSONPart = '';
-                completeJSON = true;
-                const tokenDom = document.createElement('span');
-                tokenDom.classList.add('token');
-                tokenDom.innerText = data.candidates[0].content.parts[0].text;
-                completionDom.appendChild(tokenDom);
-                resultManager.scrollToBottomCompletions();
-              } catch (e) {
-                continue;
-              }
-            }
-          }
-          return done ? undefined : reader.read().then(processResult);
-        });
-      });
-    } else {
-      fetch(`${globalOptions.completion.apiURL
-        }/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${globalOptions.completion.apiKey} `
-        },
-        body: JSON.stringify({
-          model: globalOptions.completion.model,
-          messages: [
-            {
-              role: 'system',
-              content: globalOptions.completion.prompt,
-            },
-            {
-              role: 'user',
-              content: resultManager.getTranscript(),
-            }
-          ],
-          stream: true
-        }),
-        signal: abortController.signal,
-      }).then((res: Response): any => {
-        const decoder = new TextDecoder();
-        const reader = res.body!.getReader();
-        let unprocessedParts: string = '';
-        reader.read().then(function processResult({ done, value }) { // how is the type here?
-          const lines = done ? unprocessedParts.split("\n") : (unprocessedParts + decoder.decode(value)).split("\n");
-          unprocessedParts = lines.pop()!;
-          for (const line of lines) {
-            if (line.length === 0 || line === "data: [DONE]") {
-              continue;
-            }
-            const content = JSON.parse(line.replace("data: ", ""));
-            if (content.choices.length > 0 && content.choices[0].finish_reason !== 'stop') {
-              const tokenDom = document.createElement('span');
-              tokenDom.classList.add('token');
-              tokenDom.innerText = content.choices[0].delta.content;
-              completionDom.appendChild(tokenDom);
-              resultManager.scrollToBottomCompletions();
-            }
-          }
-          return done ? undefined : reader.read().then(processResult);
-        });
-      });
-    }
+    this.resultManager.addCompletion(completionDom);
+
+    this.completionController = runCompletion(transcript, {
+      onToken: (token) => {
+        const tokenDom = document.createElement('span');
+        tokenDom.classList.add('token');
+        tokenDom.textContent = token;
+        completionDom.appendChild(tokenDom);
+        this.resultManager.scrollToBottomCompletions();
+      },
+      onError: (error) => {
+        this.consolePanel.setStatus(String((error as Error)?.message ?? error), true);
+      },
+      onDone: () => this.finishCompletion(),
+    });
+  }
+
+  abortCompletion(): void {
+    this.completionController?.abort();
+  }
+
+  private finishCompletion(): void {
+    this.completionController = null;
+    this.consolePanel.doneCompleting();
   }
 }
 
-const interjector = new Interjector();
+fetchConfig()
+  .then((config) => new Interjector(config))
+  .catch((error) => {
+    const status = document.getElementById('status');
+    if (status) {
+      status.textContent = `Failed to load server config: ${(error as Error).message}`;
+      status.classList.add('error');
+    }
+  });
