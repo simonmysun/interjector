@@ -10,7 +10,6 @@
   <div id="console">
     <button id="start-btn">Start</button>
     <button id="clear-btn">Clear</button>
-    <button id="complete-btn">Complete</button>
     🎙️: <div id="running-indicator"></div>
     🔊: <div id="audio-indicator"></div>
     🎶: <div id="sound-indicator"></div>
@@ -35,7 +34,9 @@
       <div id="transcript-translated-final"></div>
       <div id="transcript-translated-ongoing"></div>
     </div>
-    <div id="completions"></div>
+    <div id="completions">
+      <!-- One .completion-panel per prompt preset is injected here at runtime. -->
+    </div>
   </div>
   <script src="./static/main.bundle.js"></script>
 </body>

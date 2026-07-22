@@ -10,7 +10,7 @@ import type {
   TranslationOptions,
   CompletionOptions,
 } from './@types';
-import { config, publicConfig } from './config.ts';
+import { config, publicConfig, getCompletionPrompt } from './config.ts';
 import { getTranslationProvider, TranslationError } from './translation-api.ts';
 import { getCompletionProvider } from './completion-api.ts';
 import { handleAsrUpgrade } from './asr-proxy.ts';
@@ -105,27 +105,36 @@ const handleComplete: RouteHandler = async (req, res) => {
     sendJson(res, 400, { error: 'Empty request body' });
     return;
   }
-  let parsed: { text?: unknown };
+  let parsed: { text?: unknown; presetId?: unknown };
   try {
     parsed = JSON.parse(payload);
   } catch {
     sendJson(res, 400, { error: 'Invalid JSON' });
     return;
   }
-  if (typeof parsed.text !== 'string' || parsed.text.length === 0) {
-    sendJson(res, 400, { error: 'Missing text' });
+  // An empty transcript is allowed (prompt-only completion), but the field, if
+  // present, must be a string.
+  if (parsed.text !== undefined && typeof parsed.text !== 'string') {
+    sendJson(res, 400, { error: 'Invalid text' });
     return;
   }
+  const text = typeof parsed.text === 'string' ? parsed.text : '';
   if (!config.completion.model || !config.completion.apiUrl) {
     sendJson(res, 500, { error: 'Completion is not configured on the server (COMPLETION_MODEL / COMPLETION_API_URL).' });
     return;
   }
 
+  // The client selects a prompt by its preset id; the prompt text itself never
+  // leaves the server. Fall back to the single COMPLETION_PROMPT when no (valid)
+  // preset is supplied, preserving the previous single-panel behaviour.
+  const presetId = typeof parsed.presetId === 'string' ? parsed.presetId : undefined;
+  const prompt = getCompletionPrompt(presetId) ?? config.completion.prompt;
+
   // All completion config comes from the server environment; the client only
-  // supplies the transcript text.
+  // supplies the transcript text and which preset to run.
   const options: CompletionOptions = {
-    text: parsed.text,
-    prompt: config.completion.prompt,
+    text,
+    prompt,
     model: config.completion.model,
     apiUrl: config.completion.apiUrl,
     apiKey: config.completion.apiKey,

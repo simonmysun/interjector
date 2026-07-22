@@ -4,6 +4,7 @@ import DeepgramProvider from './speech/DeepgramProvider';
 import AudioMixer from './audio/AudioMixer';
 import ResultManager from './ResultManager';
 import ConsolePanel from './ConsolePanel';
+import CompletionPanel from './CompletionPanel';
 import { translate } from './translation';
 import { runCompletion } from './completion';
 
@@ -15,9 +16,12 @@ class Interjector {
   private resultManager = new ResultManager();
   private consolePanel = new ConsolePanel();
   private speech: DeepgramProvider | null = null;
-  private completionController: AbortController | null = null;
   private interimTranslateTimer: ReturnType<typeof setTimeout> | null = null;
   private interimTranslateController: AbortController | null = null;
+
+  // Per-preset completion panels and their in-flight abort controllers.
+  private completionsContainerDom = document.getElementById('completions') as HTMLDivElement;
+  private completionControllers = new Map<string, AbortController>();
 
   // Audio source UI elements.
   private micListDom = document.getElementById('mic-list') as HTMLSpanElement;
@@ -30,6 +34,51 @@ class Interjector {
     this.showConfigSummary();
     this.wireConsole();
     this.wireAudioControls();
+    this.buildCompletionPanels();
+  }
+
+  /**
+   * Create one completion panel per prompt preset. Each panel has its own
+   * button that triggers a completion for that preset over the current
+   * transcript, appending the result to its scrollable history. Falls back to a
+   * single unnamed panel (using the server's default COMPLETION_PROMPT) when no
+   * presets are configured.
+   */
+  private buildCompletionPanels(): void {
+    const presets = this.config.completion.presets;
+    const list = presets.length > 0 ? presets : [{ id: '', label: 'Completion' }];
+    this.completionsContainerDom.replaceChildren();
+    for (const preset of list) {
+      const panel = new CompletionPanel(preset);
+      panel.onComplete(() => this.runPanelCompletion(panel));
+      panel.onAbort(() => this.completionControllers.get(panel.preset.id)?.abort());
+      this.completionsContainerDom.appendChild(panel.element);
+    }
+  }
+
+  private runPanelCompletion(panel: CompletionPanel): void {
+    if (panel.isRunning) {
+      return;
+    }
+    // An empty transcript is allowed: some presets are useful with prompt-only
+    // input (the model just runs on the system prompt).
+    const transcript = this.resultManager.getTranscript();
+    this.consolePanel.clearStatus();
+    panel.begin();
+
+    const controller = runCompletion(
+      transcript,
+      {
+        onToken: (token) => panel.appendToken(token),
+        onError: (error) => panel.appendError(String((error as Error)?.message ?? error)),
+        onDone: () => {
+          panel.finish();
+          this.completionControllers.delete(panel.preset.id);
+        },
+      },
+      panel.preset.id || undefined,
+    );
+    this.completionControllers.set(panel.preset.id, controller);
   }
 
   private showConfigSummary(): void {
@@ -88,8 +137,6 @@ class Interjector {
     this.consolePanel.on('start', () => this.startRecognition());
     this.consolePanel.on('stop', () => this.speech?.stop());
     this.consolePanel.on('clear', () => this.resultManager.clearTranscript());
-    this.consolePanel.on('complete', () => this.completeTranscript());
-    this.consolePanel.on('abort', () => this.abortCompletion());
   }
 
   private startRecognition(): void {
@@ -187,45 +234,6 @@ class Interjector {
       });
   }
 
-  completeTranscript(): void {
-    if (this.completionController) {
-      return;
-    }
-    const transcript = this.resultManager.getTranscript();
-    if (!transcript) {
-      this.consolePanel.setStatus('Nothing to complete yet.', true);
-      return;
-    }
-    this.consolePanel.clearStatus();
-    this.consolePanel.completing();
-
-    const completionDom = document.createElement('div');
-    completionDom.classList.add('completion');
-    this.resultManager.addCompletion(completionDom);
-
-    this.completionController = runCompletion(transcript, {
-      onToken: (token) => {
-        const tokenDom = document.createElement('span');
-        tokenDom.classList.add('token');
-        tokenDom.textContent = token;
-        completionDom.appendChild(tokenDom);
-        this.resultManager.scrollToBottomCompletions();
-      },
-      onError: (error) => {
-        this.consolePanel.setStatus(String((error as Error)?.message ?? error), true);
-      },
-      onDone: () => this.finishCompletion(),
-    });
-  }
-
-  abortCompletion(): void {
-    this.completionController?.abort();
-  }
-
-  private finishCompletion(): void {
-    this.completionController = null;
-    this.consolePanel.doneCompleting();
-  }
 }
 
 fetchConfig()

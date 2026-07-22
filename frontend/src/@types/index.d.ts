@@ -24,6 +24,12 @@ export type AudioSourceOptions = {
  * Non-secret configuration the browser fetches from the server (`/api/config`).
  * All keys/prompts/models live on the server and are never exposed here.
  */
+/** A completion prompt preset as seen by the browser (no prompt text). */
+export type CompletionPreset = {
+  id: string;
+  label: string;
+};
+
 export type PublicConfig = {
   speech: {
     provider: 'deepgram';
@@ -34,6 +40,10 @@ export type PublicConfig = {
     sourceLanguage: string;
     targetLanguage: string;
     backend: TranslationBackend;
+  };
+  completion: {
+    /** Ordered prompt presets; each renders its own completion panel. */
+    presets: CompletionPreset[];
   };
 };
 

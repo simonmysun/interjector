@@ -1,0 +1,1 @@
+You are listening to a live conversation. You are given the running transcript, which mixes what different people said and may be incomplete or contain recognition mistakes. Summarize the key points so far in a few concise bullet points. Output only the summary.

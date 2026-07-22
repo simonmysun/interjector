@@ -34,17 +34,22 @@ async function readLines(res: Response, onLine: (line: string) => void): Promise
 
 /**
  * Run an LLM completion over the current transcript via the backend proxy. The
- * browser sends only the transcript; the model/prompt/key live on the server.
- * Returns an AbortController so the caller can cancel the stream.
+ * browser sends only the transcript and which prompt preset to use; the
+ * model/prompt/key live on the server. Returns an AbortController so the caller
+ * can cancel the stream.
  */
-export function runCompletion(transcript: string, handlers: CompletionHandlers): AbortController {
+export function runCompletion(
+  transcript: string,
+  handlers: CompletionHandlers,
+  presetId?: string,
+): AbortController {
   const controller = new AbortController();
 
   const work = (async () => {
     const res = await fetch('/api/complete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: transcript }),
+      body: JSON.stringify(presetId === undefined ? { text: transcript } : { text: transcript, presetId }),
       signal: controller.signal,
     });
     if (!res.ok) {

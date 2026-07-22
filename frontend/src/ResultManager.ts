@@ -16,7 +16,6 @@ class ResultManager {
   private transcriptOnGoingDom: HTMLDivElement;
   private transcriptTranslatedFinalDom: HTMLDivElement;
   private transcriptTranslatedOnGoingDom: HTMLDivElement;
-  private completionsDom: HTMLDivElement;
 
   /** Last rendered speaker index, so we only print a label when it changes. */
   private lastSpeaker: number | undefined = undefined;
@@ -30,7 +29,6 @@ class ResultManager {
     this.transcriptOnGoingDom = document.getElementById('transcript-ongoing') as HTMLDivElement;
     this.transcriptTranslatedFinalDom = document.getElementById('transcript-translated-final') as HTMLDivElement;
     this.transcriptTranslatedOnGoingDom = document.getElementById('transcript-translated-ongoing') as HTMLDivElement;
-    this.completionsDom = document.getElementById('completions') as HTMLDivElement;
     this.eventListeners = {
       cleared: [],
     };
@@ -112,15 +110,6 @@ class ResultManager {
   /** Read the current interim transcript directly from the DOM. */
   getOnGoingTranscript(): string {
     return this.transcriptOnGoingDom.innerText.trim();
-  }
-
-  addCompletion(completionDom: HTMLDivElement): void {
-    this.completionsDom.appendChild(completionDom);
-    this.scrollToBottomCompletions();
-  }
-
-  scrollToBottomCompletions(): void {
-    this.completionsDom.scrollTop = this.completionsDom.scrollHeight;
   }
 
   scrollToBottomTranscript(): void {

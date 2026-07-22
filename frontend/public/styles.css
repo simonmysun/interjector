@@ -23,11 +23,120 @@ body {
 }
 
 #transcript,
-#transcript-translated,
-#completions {
+#transcript-translated {
   width: 33%;
   height: 100%;
   overflow-y: auto;
+}
+
+/* The completions area occupies the third column and stacks its per-preset
+   panels vertically. Each panel is fixed at one third of the column height
+   regardless of how many presets there are; with more than three the column
+   itself scrolls. Overflow within a single run scrolls inside that panel's
+   body. */
+#completions {
+  width: 33%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  overflow-y: auto;
+}
+
+.completion-panel {
+  /* One third of the column height. Subtract the two 0.5em gaps that separate
+     three panels so exactly three fit without overflowing. */
+  flex: 0 0 calc((100% - 1em) / 3);
+  height: calc((100% - 1em) / 3);
+  min-height: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid #ddd;
+  padding-top: 0.25em;
+}
+
+.completion-panel:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.completion-panel-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5em;
+  padding: 0.25em 0;
+  background: #fff;
+  border-bottom: 1px solid #eee;
+}
+
+.completion-panel-title {
+  font-weight: bold;
+  font-size: 0.9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.completion-panel-btn {
+  flex: none;
+}
+
+/* Completion history for a single preset. Fills the panel's share of the
+   column and scrolls internally when the history is long. `pre-wrap` preserves
+   newlines emitted by the model (streamed tokens are inline spans, so without
+   it newlines collapse to spaces). */
+.completion-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-top: 0.5em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+/* Each completion run is a distinct card so successive results are visually
+   separated in the scrollable history. */
+.completion {
+  margin-bottom: 0.75em;
+  padding: 0.4em 0.5em;
+  border-left: 3px solid #4682b4;
+  background: #f5f7fa;
+  border-radius: 3px;
+}
+
+.completion:last-child {
+  margin-bottom: 0;
+}
+
+/* Loading indicator shown after a run starts, until the first token arrives. */
+.completion-loading {
+  color: #888;
+  font-style: italic;
+}
+
+.completion-loading::after {
+  content: '';
+  animation: completion-ellipsis 1.2s steps(4, end) infinite;
+}
+
+@keyframes completion-ellipsis {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+  100% { content: ''; }
+}
+
+.completion-empty {
+  color: #888;
+  font-style: italic;
+}
+
+.completion-error {
+  color: #c0392b;
+  margin-bottom: 0.75em;
 }
 
 #console {
@@ -98,7 +207,6 @@ body {
   margin: 0.15em 0;
 }
 
-.completion,
 #transcript-translated-ongoing,
 #transcript-ongoing {
   margin-bottom: 1em;

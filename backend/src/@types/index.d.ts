@@ -52,6 +52,18 @@ export interface TranslationProvider {
   translate(options: TranslationOptions): Promise<TranslationResult>;
 }
 
+/**
+ * A named completion prompt preset loaded from a prompt file. `id` is the file
+ * name (used to look the prompt up on completion requests); `label` is a
+ * human-readable title shown in the UI. `prompt` is the system prompt and is
+ * never sent to the browser.
+ */
+export interface CompletionPreset {
+  id: string;
+  label: string;
+  prompt: string;
+}
+
 export type CompletionStyle = 'openai' | 'gemini';
 
 export interface CompletionOptions {

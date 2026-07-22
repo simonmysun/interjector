@@ -1,9 +1,10 @@
-type ConsolePanelEventName = 'start' | 'stop' | 'clear' | 'complete' | 'abort';
+type ConsolePanelEventName = 'start' | 'stop' | 'clear';
 
 /**
  * Manages the control bar. Button labels/states are driven directly by the DOM
- * (DOM-as-state, F-UI-3): e.g. the start button text distinguishes Start/Stop,
- * the complete button text distinguishes Complete/Abort.
+ * (DOM-as-state, F-UI-3): e.g. the start button text distinguishes Start/Stop.
+ * Completion is no longer triggered from here — each prompt preset has its own
+ * panel and button (see CompletionPanel).
  */
 class ConsolePanel {
   private startBtnDom: HTMLButtonElement;
@@ -12,7 +13,6 @@ class ConsolePanel {
   private audioIndicatorDom: HTMLDivElement;
   private soundIndicatorDom: HTMLDivElement;
   private speechIndicatorDom: HTMLDivElement;
-  private completeBtnDom: HTMLButtonElement;
   private statusDom: HTMLDivElement | null;
 
   private eventListeners: { [eventName in ConsolePanelEventName]: { (): void }[] };
@@ -24,23 +24,17 @@ class ConsolePanel {
     this.audioIndicatorDom = document.getElementById('audio-indicator') as HTMLDivElement;
     this.soundIndicatorDom = document.getElementById('sound-indicator') as HTMLDivElement;
     this.speechIndicatorDom = document.getElementById('speech-indicator') as HTMLDivElement;
-    this.completeBtnDom = document.getElementById('complete-btn') as HTMLButtonElement;
     this.statusDom = document.getElementById('status') as HTMLDivElement | null;
     this.eventListeners = {
       start: [],
       stop: [],
       clear: [],
-      complete: [],
-      abort: [],
     };
 
     this.startBtnDom.addEventListener('click', () => {
       this.emit(this.startBtnDom.textContent === 'Start' ? 'start' : 'stop');
     });
     this.clearBtnDom.addEventListener('click', () => this.emit('clear'));
-    this.completeBtnDom.addEventListener('click', () => {
-      this.emit(this.completeBtnDom.textContent === 'Abort' ? 'abort' : 'complete');
-    });
   }
 
   private emit(event: ConsolePanelEventName): void {
@@ -66,15 +60,6 @@ class ConsolePanel {
     this.deactiveSpeechIndicator();
     this.activeClearBtn();
     this.startBtnDom.textContent = 'Start';
-  }
-
-  /** Switch the Complete button into its Abort state while a completion runs (F-03-4). */
-  completing(): void {
-    this.completeBtnDom.textContent = 'Abort';
-  }
-
-  doneCompleting(): void {
-    this.completeBtnDom.textContent = 'Complete';
   }
 
   setStatus(message: string, isError = false): void {
