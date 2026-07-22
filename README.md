@@ -57,7 +57,9 @@ automatically (via Node's built-in `--env-file-if-exists`, no extra dependency).
 | `TRANSLATION_SOURCE_LANGUAGE` / `TRANSLATION_TARGET_LANGUAGE` | BCP 47 language tags. |
 | `TRANSLATION_BACKEND` | `free-google-translate` \| `google-translate` \| `bing-translate` \| `deepl-translate` \| `openai-translate`. |
 | `TRANSLATION_API_URL` / `TRANSLATION_API_KEY` / `TRANSLATION_MODEL` / `TRANSLATION_PROMPT` | Per-backend translation settings. |
-| `COMPLETION_API_URL` / `COMPLETION_API_KEY` / `COMPLETION_MODEL` / `COMPLETION_PROMPT` | Optional LLM completion ("Complete" button). |
+| `COMPLETION_API_URL` / `COMPLETION_API_KEY` / `COMPLETION_MODEL` | Optional LLM completion (the per-preset "Complete" buttons). |
+| `COMPLETION_PROMPTS_DIR` | Directory of prompt presets — one `*.md` file per completion panel (default `prompts`). See [Completion prompts](#completion-prompts). |
+| `COMPLETION_PROMPT` | Fallback single prompt, used only when `COMPLETION_PROMPTS_DIR` contains no prompts. |
 
 All API keys are read from the environment on the server and are never returned to
 the browser. The frontend sends only the text to translate/complete and the audio
@@ -77,6 +79,59 @@ to transcribe.
 - `TRANSLATION_BACKEND=free-google-translate` needs no key; `google-translate` / `bing-translate` / `deepl-translate` each need their own `TRANSLATION_API_KEY`; `openai-translate` needs `TRANSLATION_MODEL` + `TRANSLATION_PROMPT`.
 - For completion, set `COMPLETION_API_URL` + `COMPLETION_API_KEY` + `COMPLETION_MODEL` (+ `COMPLETION_PROMPT`). If the model starts with `gemini`, the URL is treated as Google Gemini style (e.g. `https://generativelanguage.googleapis.com/v1beta/models/`); otherwise OpenAI style.
 - [Prompt Examples](./docs/prompt-examples.md) are provided to help you get started.
+
+### Completion prompts
+
+The right-hand column shows one completion panel per prompt preset, each with its
+own **Complete** button and scrollable history. Presets are loaded from the
+directory given by `COMPLETION_PROMPTS_DIR` (default `prompts/`): drop one
+Markdown file per panel, e.g.
+
+```
+prompts/
+  10-summarize.md
+  20-background-knowledge.md
+  30-possible-answer.md
+  40-joke.md
+```
+
+- Files are shown in file-name order, so a numeric prefix (`10-`, `20-`, …)
+  controls the on-screen order.
+- The panel title is derived from the file name: the numeric prefix and `.md`
+  extension are dropped and separators become spaces, e.g.
+  `20-background-knowledge.md` → **Background knowledge**.
+- The file's contents are the system prompt for that panel. Prompt text stays on
+  the server; only the derived id/label is sent to the browser.
+- If the directory is empty or unset, the single `COMPLETION_PROMPT` is used
+  instead (one unnamed panel).
+
+## Running with Docker
+
+A `Dockerfile` is included; it builds the bundles and runs the server on plain
+HTTP (`HTTP_ONLY=true`, `HOST=0.0.0.0`, `PORT=8000`) with TLS expected to be
+terminated by a reverse proxy.
+
+```sh
+docker build -t interjector .
+docker run --rm -p 8000:8000 --env-file .env interjector
+```
+
+The image does **not** bundle a `prompts/` directory, so completion panels are
+empty unless you mount your prompts in. The server runs with its working
+directory at `/app/dist`, and the default `COMPLETION_PROMPTS_DIR=prompts`
+resolves to **`/app/dist/prompts`** (a `../prompts` fallback also covers
+`/app/prompts`). Mount your host prompt directory there, read-only:
+
+```sh
+docker run --rm -p 8000:8000 \
+  --env-file .env \
+  -v "$(pwd)/prompts:/app/dist/prompts:ro" \
+  interjector
+```
+
+To keep prompts somewhere else in the container, set `COMPLETION_PROMPTS_DIR` to
+an absolute path and mount to match, e.g.
+`-e COMPLETION_PROMPTS_DIR=/prompts -v "$(pwd)/prompts:/prompts:ro"`.
 
 ## Screenshot
 
